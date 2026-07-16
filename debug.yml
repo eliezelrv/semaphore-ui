@@ -1,0 +1,29 @@
+---
+- hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Mostrar Ansible
+      command: which ansible
+      register: ansible_bin
+
+    - debug:
+        var: ansible_bin.stdout
+
+    - name: Mostrar Python
+      command: python3 -c "import sys; print(sys.executable)"
+      register: py
+
+    - debug:
+        var: py.stdout
+
+    - name: Intentar importar winrm
+      command: python3 -c "import winrm; print(winrm.__file__)"
+      register: winrm
+      ignore_errors: yes
+
+    - debug:
+        var: winrm.stdout
+
+    - debug:
+        var: winrm.stderr
