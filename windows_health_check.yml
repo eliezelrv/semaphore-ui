@@ -1,0 +1,133 @@
+---
+- name: Auditoría de Windows
+  hosts: all
+  gather_facts: yes
+
+  tasks:
+
+    #####################################################################
+    # Información general
+    #####################################################################
+
+    - name: Mostrar información general del sistema
+      debug:
+        msg:
+          - "========================================================"
+          - "Equipo...............: {{ ansible_hostname }}"
+          - "Inventario...........: {{ inventory_hostname }}"
+          - "Sistema Operativo....: {{ ansible_distribution }}"
+          - "Versión..............: {{ ansible_distribution_version }}"
+          - "Build................: {{ ansible_distribution_build }}"
+          - "Arquitectura.........: {{ ansible_architecture }}"
+          - "Kernel...............: {{ ansible_kernel }}"
+          - "Dominio..............: {{ ansible_domain | default('N/A') }}"
+          - "Fabricante...........: {{ ansible_system_vendor }}"
+          - "Modelo...............: {{ ansible_product_name }}"
+          - "BIOS.................: {{ ansible_bios_version }}"
+          - "========================================================"
+
+    #####################################################################
+    # CPU
+    #####################################################################
+
+    - name: Mostrar CPU
+      debug:
+        msg:
+          - "Procesador...........: {{ ansible_processor[2] | default(ansible_processor[-1]) }}"
+          - "Sockets..............: {{ ansible_processor_count }}"
+          - "Núcleos..............: {{ ansible_processor_cores }}"
+          - "Procesadores lógicos.: {{ ansible_processor_vcpus }}"
+
+    #####################################################################
+    # Memoria
+    #####################################################################
+
+    - name: Mostrar memoria RAM
+      debug:
+        msg:
+          - "RAM Total............: {{ (ansible_memtotal_mb/1024)|round(2) }} GB"
+          - "RAM Libre............: {{ (ansible_memfree_mb/1024)|round(2) }} GB"
+
+    #####################################################################
+    # Tiempo de actividad
+    #####################################################################
+
+    - name: Mostrar uptime
+      debug:
+        msg:
+          - "Último arranque......: {{ ansible_date_time.date }} {{ ansible_date_time.time }}"
+          - "Uptime...............: {{ ansible_uptime_seconds // 86400 }} días"
+
+    #####################################################################
+    # Discos
+    #####################################################################
+
+    - name: Mostrar uso de discos
+      debug:
+        msg:
+          - "Unidad: {{ item.mount }}"
+          - "Tamaño: {{ (item.size_total/1073741824)|round(2) }} GB"
+          - "Libre : {{ (item.size_available/1073741824)|round(2) }} GB"
+          - "Uso   : {{ (((item.size_total-item.size_available)/item.size_total)*100)|round(1) }} %"
+      loop: "{{ ansible_mounts }}"
+      when: item.mount is match('^[A-Z]:.*')
+
+    #####################################################################
+    # Servicio Windows Update
+    #####################################################################
+
+    - name: Consultar servicio Windows Update
+      ansible.windows.win_service:
+        name: wuauserv
+      register: wu_service
+
+    - name: Estado del servicio
+      debug:
+        msg:
+          - "Servicio Windows Update: {{ wu_service.exists }}"
+          - "Estado.................: {{ wu_service.state }}"
+          - "Inicio.................: {{ wu_service.start_mode }}"
+
+    #####################################################################
+    # Buscar actualizaciones
+    #####################################################################
+
+    - name: Buscar actualizaciones
+      ansible.windows.win_updates:
+        state: searched
+      register: updates
+
+    #####################################################################
+    # Resumen
+    #####################################################################
+
+    - name: Resumen
+      debug:
+        msg:
+          - "========================================================"
+          - "Equipo................: {{ ansible_hostname }}"
+          - "Actualizaciones.......: {{ updates.found_update_count | default(0) }}"
+          - "Reinicio requerido....: {{ updates.reboot_required | default(false) }}"
+          - "========================================================"
+
+    #####################################################################
+    # Detalle de actualizaciones
+    #####################################################################
+
+    - name: Mostrar actualizaciones encontradas
+      debug:
+        msg:
+          - "Título.....: {{ item.value.title }}"
+          - "Categorías.: {{ item.value.categories | join(', ') }}"
+          - "KB.........: {{ item.value.kb | default('N/A') }}"
+      loop: "{{ updates.updates | default({}) | dict2items }}"
+      when: updates.found_update_count | default(0) > 0
+
+    #####################################################################
+    # Sin actualizaciones
+    #####################################################################
+
+    - name: Equipo actualizado
+      debug:
+        msg: "El equipo no tiene actualizaciones pendientes."
+      when: updates.found_update_count | default(0) == 0
