@@ -1,98 +1,67 @@
 ---
-- name: Auditoría de Windows
+- name: Windows Health Check
   hosts: all
   gather_facts: yes
 
   tasks:
 
     #####################################################################
-    # Información general
+    # Información del sistema operativo
     #####################################################################
 
-    - name: Mostrar información general del sistema
-      debug:
-        msg:
-          - "========================================================"
-          - "Equipo...............: {{ ansible_hostname }}"
-          - "Inventario...........: {{ inventory_hostname }}"
-          - "Sistema Operativo....: {{ ansible_distribution }}"
-          - "Versión..............: {{ ansible_distribution_version }}"
-          - "Build................: {{ ansible_distribution_build }}"
-          - "Arquitectura.........: {{ ansible_architecture }}"
-          - "Kernel...............: {{ ansible_kernel }}"
-          - "Dominio..............: {{ ansible_domain | default('N/A') }}"
-          - "Fabricante...........: {{ ansible_system_vendor }}"
-          - "Modelo...............: {{ ansible_product_name }}"
-          - "BIOS.................: {{ ansible_bios_version }}"
-          - "========================================================"
+    - name: Obtener información del sistema
+      ansible.windows.win_shell: |
+        $os = Get-CimInstance Win32_OperatingSystem
+        $cs = Get-CimInstance Win32_ComputerSystem
+        $bios = Get-CimInstance Win32_BIOS
+        $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
+
+        [PSCustomObject]@{
+            ComputerName = $env:COMPUTERNAME
+            Caption = $os.Caption
+            Version = $os.Version
+            Build = $os.BuildNumber
+            Manufacturer = $cs.Manufacturer
+            Model = $cs.Model
+            RAMGB = [Math]::Round($cs.TotalPhysicalMemory / 1GB,2)
+            CPU = $cpu.Name
+            LastBoot = $os.LastBootUpTime
+            BIOS = $bios.SMBIOSBIOSVersion
+        } | ConvertTo-Json -Compress
+      register: system_info
+
+    - name: Convertir información del sistema
+      set_fact:
+        system: "{{ system_info.stdout | from_json }}"
 
     #####################################################################
-    # CPU
+    # Información de discos
     #####################################################################
 
-    - name: Mostrar CPU
-      debug:
-        msg:
-          - "Procesador...........: {{ ansible_processor[2] | default(ansible_processor[-1]) }}"
-          - "Sockets..............: {{ ansible_processor_count }}"
-          - "Núcleos..............: {{ ansible_processor_cores }}"
-          - "Procesadores lógicos.: {{ ansible_processor_vcpus }}"
+    - name: Obtener discos
+      ansible.windows.win_shell: |
+        Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3" |
+        Select-Object DeviceID,
+                      @{Name='SizeGB';Expression={[math]::Round($_.Size/1GB,2)}},
+                      @{Name='FreeGB';Expression={[math]::Round($_.FreeSpace/1GB,2)}},
+                      @{Name='FreePercent';Expression={[math]::Round(($_.FreeSpace/$_.Size)*100,1)}} |
+        ConvertTo-Json
+      register: disks
 
     #####################################################################
-    # Memoria
-    #####################################################################
-
-    - name: Mostrar memoria RAM
-      debug:
-        msg:
-          - "RAM Total............: {{ (ansible_memtotal_mb/1024)|round(2) }} GB"
-          - "RAM Libre............: {{ (ansible_memfree_mb/1024)|round(2) }} GB"
-
-    #####################################################################
-    # Tiempo de actividad
-    #####################################################################
-
-    - name: Mostrar uptime
-      debug:
-        msg:
-          - "Último arranque......: {{ ansible_date_time.date }} {{ ansible_date_time.time }}"
-          - "Uptime...............: {{ ansible_uptime_seconds // 86400 }} días"
-
-    #####################################################################
-    # Discos
-    #####################################################################
-
-    - name: Mostrar uso de discos
-      debug:
-        msg:
-          - "Unidad: {{ item.mount }}"
-          - "Tamaño: {{ (item.size_total/1073741824)|round(2) }} GB"
-          - "Libre : {{ (item.size_available/1073741824)|round(2) }} GB"
-          - "Uso   : {{ (((item.size_total-item.size_available)/item.size_total)*100)|round(1) }} %"
-      loop: "{{ ansible_mounts }}"
-      when: item.mount is match('^[A-Z]:.*')
-
-    #####################################################################
-    # Servicio Windows Update
+    # Estado Windows Update
     #####################################################################
 
     - name: Consultar servicio Windows Update
       ansible.windows.win_service:
         name: wuauserv
-      register: wu_service
-
-    - name: Estado del servicio
-      debug:
-        msg:
-          - "Servicio Windows Update: {{ wu_service.exists }}"
-          - "Estado.................: {{ wu_service.state }}"
-          - "Inicio.................: {{ wu_service.start_mode }}"
+      register: wuauserv
 
     #####################################################################
     # Buscar actualizaciones
     #####################################################################
 
-    - name: Buscar actualizaciones
+    - name: Buscar actualizaciones disponibles
       ansible.windows.win_updates:
         state: searched
       register: updates
@@ -101,33 +70,52 @@
     # Resumen
     #####################################################################
 
-    - name: Resumen
+    - name: Mostrar resumen
       debug:
         msg:
-          - "========================================================"
-          - "Equipo................: {{ ansible_hostname }}"
-          - "Actualizaciones.......: {{ updates.found_update_count | default(0) }}"
-          - "Reinicio requerido....: {{ updates.reboot_required | default(false) }}"
-          - "========================================================"
+          - "=========================================================="
+          - "Equipo               : {{ system.ComputerName }}"
+          - "Sistema Operativo    : {{ system.Caption }}"
+          - "Versión              : {{ system.Version }}"
+          - "Build                : {{ system.Build }}"
+          - "Fabricante           : {{ system.Manufacturer }}"
+          - "Modelo               : {{ system.Model }}"
+          - "CPU                  : {{ system.CPU }}"
+          - "RAM                  : {{ system.RAMGB }} GB"
+          - "BIOS                 : {{ system.BIOS }}"
+          - "Último Reinicio      : {{ system.LastBoot }}"
+          - "Windows Update       : {{ wuauserv.state }}"
+          - "Actualizaciones      : {{ updates.found_update_count | default(0) }}"
+          - "Reinicio requerido   : {{ updates.reboot_required | default(false) }}"
+          - "=========================================================="
 
     #####################################################################
-    # Detalle de actualizaciones
+    # Discos
     #####################################################################
 
-    - name: Mostrar actualizaciones encontradas
+    - name: Mostrar información de discos
       debug:
         msg:
-          - "Título.....: {{ item.value.title }}"
-          - "Categorías.: {{ item.value.categories | join(', ') }}"
-          - "KB.........: {{ item.value.kb | default('N/A') }}"
+          - "Unidad      : {{ item.DeviceID }}"
+          - "Tamaño      : {{ item.SizeGB }} GB"
+          - "Libre       : {{ item.FreeGB }} GB"
+          - "Libre (%)   : {{ item.FreePercent }} %"
+      loop: "{{ (disks.stdout | from_json) if disks.stdout.startswith('[') else [disks.stdout | from_json] }}"
+
+    #####################################################################
+    # Actualizaciones
+    #####################################################################
+
+    - name: Mostrar actualizaciones pendientes
+      debug:
+        msg:
+          - "Título      : {{ item.value.title }}"
+          - "KB          : {{ item.value.kb | default('N/A') }}"
+          - "Categorías  : {{ item.value.categories | join(', ') }}"
       loop: "{{ updates.updates | default({}) | dict2items }}"
       when: updates.found_update_count | default(0) > 0
 
-    #####################################################################
-    # Sin actualizaciones
-    #####################################################################
-
     - name: Equipo actualizado
       debug:
-        msg: "El equipo no tiene actualizaciones pendientes."
+        msg: "No hay actualizaciones pendientes."
       when: updates.found_update_count | default(0) == 0
