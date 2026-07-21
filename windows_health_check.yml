@@ -1,121 +1,69 @@
 ---
-- name: Windows Health Check
+- name: Verificar instalación de Notepad++
   hosts: all
-  gather_facts: yes
+  gather_facts: false
 
   tasks:
 
-    #####################################################################
-    # Información del sistema operativo
-    #####################################################################
-
-    - name: Obtener información del sistema
+    - name: Buscar Notepad++ instalado
       ansible.windows.win_shell: |
-        $os = Get-CimInstance Win32_OperatingSystem
-        $cs = Get-CimInstance Win32_ComputerSystem
-        $bios = Get-CimInstance Win32_BIOS
-        $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
 
-        [PSCustomObject]@{
-            ComputerName = $env:COMPUTERNAME
-            Caption = $os.Caption
-            Version = $os.Version
-            Build = $os.BuildNumber
-            Manufacturer = $cs.Manufacturer
-            Model = $cs.Model
-            RAMGB = [Math]::Round($cs.TotalPhysicalMemory / 1GB,2)
-            CPU = $cpu.Name
-            LastBoot = $os.LastBootUpTime
-            BIOS = $bios.SMBIOSBIOSVersion
-        } | ConvertTo-Json -Compress
-      register: system_info
+        $results = @()
 
-    - name: Convertir información del sistema
-      set_fact:
-        system: "{{ system_info.stdout | from_json }}"
+        $registryPaths = @(
+            "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+            "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*",
+            "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*"
+        )
 
-    #####################################################################
-    # Información de discos
-    #####################################################################
+        foreach ($path in $registryPaths) {
 
-    - name: Obtener discos
-      ansible.windows.win_shell: |
-        Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3" |
-        Select-Object DeviceID,
-                      @{Name='SizeGB';Expression={[math]::Round($_.Size/1GB,2)}},
-                      @{Name='FreeGB';Expression={[math]::Round($_.FreeSpace/1GB,2)}},
-                      @{Name='FreePercent';Expression={[math]::Round(($_.FreeSpace/$_.Size)*100,1)}} |
-        ConvertTo-Json
-      register: disks
+            $apps = Get-ItemProperty $path -ErrorAction SilentlyContinue |
+                Where-Object { $_.DisplayName -like "Notepad++*" }
 
-    #####################################################################
-    # Estado Windows Update
-    #####################################################################
+            foreach ($app in $apps) {
 
-    - name: Consultar servicio Windows Update
-      ansible.windows.win_service:
-        name: wuauserv
-      register: wuauserv
+                Write-Output "FOUND"
+                Write-Output "Name=$($app.DisplayName)"
+                Write-Output "Version=$($app.DisplayVersion)"
+                Write-Output "Publisher=$($app.Publisher)"
+                Write-Output "Location=$($app.InstallLocation)"
+                Write-Output "-----"
+            }
+        }
 
-    #####################################################################
-    # Buscar actualizaciones
-    #####################################################################
+        if ($LASTEXITCODE -ne 0) {
+            exit 0
+        }
 
-    - name: Buscar actualizaciones disponibles
-      ansible.windows.win_updates:
-        state: searched
-      register: updates
+      register: npp
 
-    #####################################################################
-    # Resumen
-    #####################################################################
+      changed_when: false
+      failed_when: false
 
-    - name: Mostrar resumen
+    #######################################################################
+
+    - name: Mostrar resultado cuando NO está instalado
       debug:
         msg:
-          - "=========================================================="
-          - "Equipo               : {{ system.ComputerName }}"
-          - "Sistema Operativo    : {{ system.Caption }}"
-          - "Versión              : {{ system.Version }}"
-          - "Build                : {{ system.Build }}"
-          - "Fabricante           : {{ system.Manufacturer }}"
-          - "Modelo               : {{ system.Model }}"
-          - "CPU                  : {{ system.CPU }}"
-          - "RAM                  : {{ system.RAMGB }} GB"
-          - "BIOS                 : {{ system.BIOS }}"
-          - "Último Reinicio      : {{ system.LastBoot }}"
-          - "Windows Update       : {{ wuauserv.state }}"
-          - "Actualizaciones      : {{ updates.found_update_count | default(0) }}"
-          - "Reinicio requerido   : {{ updates.reboot_required | default(false) }}"
-          - "=========================================================="
+          - "=================================================="
+          - "Servidor   : {{ inventory_hostname }}"
+          - "Aplicación : Notepad++"
+          - "Estado     : NO INSTALADO"
+          - "=================================================="
+      when: "'FOUND' not in npp.stdout"
 
-    #####################################################################
-    # Discos
-    #####################################################################
+    #######################################################################
 
-    - name: Mostrar información de discos
+    - name: Mostrar resultado cuando está instalado
       debug:
-        msg:
-          - "Unidad      : {{ item.DeviceID }}"
-          - "Tamaño      : {{ item.SizeGB }} GB"
-          - "Libre       : {{ item.FreeGB }} GB"
-          - "Libre (%)   : {{ item.FreePercent }} %"
-      loop: "{{ (disks.stdout | from_json) if disks.stdout.startswith('[') else [disks.stdout | from_json] }}"
+        msg: |
+          ==================================================
+          Servidor   : {{ inventory_hostname }}
+          Aplicación : Notepad++
+          Estado     : INSTALADO
 
-    #####################################################################
-    # Actualizaciones
-    #####################################################################
+          {{ npp.stdout }}
 
-    - name: Mostrar actualizaciones pendientes
-      debug:
-        msg:
-          - "Título      : {{ item.value.title }}"
-          - "KB          : {{ item.value.kb | default('N/A') }}"
-          - "Categorías  : {{ item.value.categories | join(', ') }}"
-      loop: "{{ updates.updates | default({}) | dict2items }}"
-      when: updates.found_update_count | default(0) > 0
-
-    - name: Equipo actualizado
-      debug:
-        msg: "No hay actualizaciones pendientes."
-      when: updates.found_update_count | default(0) == 0
+          ==================================================
+      when: "'FOUND' in npp.stdout"
