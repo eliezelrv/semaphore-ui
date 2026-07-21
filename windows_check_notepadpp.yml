@@ -1,0 +1,45 @@
+---
+- name: Verificar instalación de Notepad++
+  hosts: all
+  gather_facts: false
+
+  tasks:
+
+    - name: Buscar Notepad++ en el registro
+      ansible.windows.win_shell: |
+        $apps = @()
+
+        $paths = @(
+          "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+          "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
+        )
+
+        foreach ($path in $paths) {
+            $apps += Get-ItemProperty $path -ErrorAction SilentlyContinue |
+                     Where-Object { $_.DisplayName -like "Notepad++*" }
+        }
+
+        if ($apps.Count -gt 0) {
+            $apps | Select-Object DisplayName, DisplayVersion, Publisher, InstallLocation | ConvertTo-Json -Compress
+        } else {
+            Write-Output "NOT_INSTALLED"
+        }
+      register: notepadpp
+
+    - name: Mostrar resultado cuando está instalado
+      debug:
+        msg:
+          - "Servidor...........: {{ inventory_hostname }}"
+          - "Estado.............: INSTALADO"
+          - "Nombre.............: {{ (notepadpp.stdout | from_json).DisplayName }}"
+          - "Versión............: {{ (notepadpp.stdout | from_json).DisplayVersion }}"
+          - "Fabricante.........: {{ (notepadpp.stdout | from_json).Publisher }}"
+          - "Ruta...............: {{ (notepadpp.stdout | from_json).InstallLocation | default('No especificada') }}"
+      when: notepadpp.stdout != "NOT_INSTALLED"
+
+    - name: Mostrar resultado cuando NO está instalado
+      debug:
+        msg:
+          - "Servidor...........: {{ inventory_hostname }}"
+          - "Estado.............: NO INSTALADO"
+      when: notepadpp.stdout == "NOT_INSTALLED"
