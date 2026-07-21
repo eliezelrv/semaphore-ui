@@ -5,41 +5,42 @@
 
   tasks:
 
-    - name: Buscar Notepad++ en el registro
+    - name: Buscar Notepad++
       ansible.windows.win_shell: |
-        $apps = @()
+        $apps = Get-ItemProperty `
+          "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*" ,
+          "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*" `
+          -ErrorAction SilentlyContinue |
+          Where-Object { $_.DisplayName -like "Notepad++*" }
 
-        $paths = @(
-          "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
-          "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
-        )
+        if ($apps) {
+            Write-Host "============================================"
+            Write-Host "Servidor : $env:COMPUTERNAME"
+            Write-Host "Estado   : INSTALADO"
+            Write-Host ""
 
-        foreach ($path in $paths) {
-            $apps += Get-ItemProperty $path -ErrorAction SilentlyContinue |
-                     Where-Object { $_.DisplayName -like "Notepad++*" }
+            foreach($app in $apps){
+                Write-Host "Nombre   : $($app.DisplayName)"
+                Write-Host "Versión  : $($app.DisplayVersion)"
+                Write-Host "Editor   : $($app.Publisher)"
+                Write-Host "Ruta     : $($app.InstallLocation)"
+                Write-Host ""
+            }
+
+            Write-Host "============================================"
+        }
+        else {
+            Write-Host "============================================"
+            Write-Host "Servidor : $env:COMPUTERNAME"
+            Write-Host "Estado   : NO INSTALADO"
+            Write-Host "============================================"
         }
 
-        if ($apps.Count -gt 0) {
-            $apps | Select-Object DisplayName, DisplayVersion, Publisher, InstallLocation | ConvertTo-Json -Compress
-        } else {
-            Write-Output "NOT_INSTALLED"
-        }
-      register: notepadpp
+      register: resultado
 
-    - name: Mostrar resultado cuando está instalado
-      debug:
-        msg:
-          - "Servidor...........: {{ inventory_hostname }}"
-          - "Estado.............: INSTALADO"
-          - "Nombre.............: {{ (notepadpp.stdout | from_json).DisplayName }}"
-          - "Versión............: {{ (notepadpp.stdout | from_json).DisplayVersion }}"
-          - "Fabricante.........: {{ (notepadpp.stdout | from_json).Publisher }}"
-          - "Ruta...............: {{ (notepadpp.stdout | from_json).InstallLocation | default('No especificada') }}"
-      when: notepadpp.stdout != "NOT_INSTALLED"
+      changed_when: false
+      failed_when: false
 
-    - name: Mostrar resultado cuando NO está instalado
+    - name: Mostrar resultado
       debug:
-        msg:
-          - "Servidor...........: {{ inventory_hostname }}"
-          - "Estado.............: NO INSTALADO"
-      when: notepadpp.stdout == "NOT_INSTALLED"
+        var: resultado.stdout
