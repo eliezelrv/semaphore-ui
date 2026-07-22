@@ -1,0 +1,45 @@
+---
+- name: Inventario de puertos abiertos
+  hosts: all
+  gather_facts: false
+
+  tasks:
+
+    - name: Obtener puertos en escucha
+      ansible.windows.win_shell: |
+
+        $ports = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
+            Sort-Object LocalPort |
+            Select-Object LocalAddress,
+                          LocalPort,
+                          OwningProcess
+
+        foreach($p in $ports){
+
+            $proc = Get-Process -Id $p.OwningProcess -ErrorAction SilentlyContinue
+
+            if($proc){
+                $name = $proc.ProcessName
+            }
+            else{
+                $name = "Unknown"
+            }
+
+            "{0,-18} {1,-8} {2}" -f $p.LocalAddress,$p.LocalPort,$name
+        }
+
+      register: listening_ports
+
+      changed_when: false
+      failed_when: false
+
+    - name: Mostrar puertos abiertos
+      debug:
+        msg: |
+          ===========================================
+          Servidor: {{ inventory_hostname }}
+          ===========================================
+
+          {{ listening_ports.stdout }}
+
+          ===========================================
