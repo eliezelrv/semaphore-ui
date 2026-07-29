@@ -1,0 +1,11 @@
+---
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - debug:
+        msg:
+          - "Host={{ inventory_hostname }}"
+          - "User={{ ansible_user }}"
+          - "Port={{ ansible_port }}"
+          - "Scheme={{ ansible_winrm_scheme }}"
