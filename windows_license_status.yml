@@ -1,0 +1,51 @@
+---
+- name: Verificar estado de licenciamiento de Windows
+  hosts: windows
+  gather_facts: yes
+
+  tasks:
+
+    - name: Consultar informacion de licenciamiento
+      ansible.windows.win_powershell:
+        script: |
+          $license = Get-CimInstance SoftwareLicensingProduct |
+            Where-Object {
+              $_.PartialProductKey -and
+              $_.Name -like "Windows*"
+            } |
+            Select-Object -First 1
+
+          $statusMap = @{
+            0 = "Unlicensed"
+            1 = "Licensed"
+            2 = "OOBGrace"
+            3 = "OOTGrace"
+            4 = "NonGenuineGrace"
+            5 = "Notification"
+            6 = "ExtendedGrace"
+          }
+
+          [PSCustomObject]@{
+            ComputerName      = $env:COMPUTERNAME
+            WindowsEdition    = (Get-CimInstance Win32_OperatingSystem).Caption
+            Version           = (Get-CimInstance Win32_OperatingSystem).Version
+            LicenseStatusCode = $license.LicenseStatus
+            LicenseStatus     = $statusMap[[int]$license.LicenseStatus]
+            PartialProductKey = $license.PartialProductKey
+            Description       = $license.Description
+          }
+      register: windows_license
+
+    - name: Mostrar estado de licenciamiento
+      ansible.builtin.debug:
+        msg:
+          - "=============================================="
+          - "Servidor: {{ inventory_hostname }}"
+          - "Hostname Windows: {{ windows_license.output[0].ComputerName }}"
+          - "Sistema Operativo: {{ windows_license.output[0].WindowsEdition }}"
+          - "Version: {{ windows_license.output[0].Version }}"
+          - "Estado: {{ windows_license.output[0].LicenseStatus }}"
+          - "Codigo de estado: {{ windows_license.output[0].LicenseStatusCode }}"
+          - "Partial Product Key: {{ windows_license.output[0].PartialProductKey }}"
+          - "Descripcion: {{ windows_license.output[0].Description }}"
+          - "=============================================="
